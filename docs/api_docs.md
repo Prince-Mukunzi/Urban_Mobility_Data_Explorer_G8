@@ -102,11 +102,6 @@ Routes in `trips.py` expose data used by the dashboard.
 Error handling & status codes
 - `200 OK` — successful GETs
 - `201 Created` — successful resource creation (e.g., register)
-- `400 Bad Request` — malformed request or missing fields
-- `401 Unauthorized` — authentication required (if implemented)
-- `403 Forbidden` — insufficient permissions
-- `404 Not Found` — resource not found
-- `500 Internal Server Error` — unexpected server error
 
 Usage examples (curl)
 - Register:
@@ -131,3 +126,4 @@ Notes & next steps
 
 Contact
 - Maintain the docs in `docs/api_docs.md`. For implementation details, see [backend/app/routes](backend/app/routes)
+
