@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, abort
 from models import db, Trip, Location
 from sqlalchemy.sql import func
 from sqlalchemy import extract
@@ -14,6 +14,12 @@ def apply_trip_filters(query):
             extract('hour', Trip.tpep_pickup_datetime) == pickup_hour
         )
 
+    dropoff_hour = request.args.get('dropoff_hour', type=int)
+    if dropoff_hour is not None:
+        query = query.filter(
+            extract('hour', Trip.tpep_dropoff_datetime) == dropoff_hour
+        )
+
     date_from = request.args.get('date_from')
     date_to = request.args.get('date_to')
 
@@ -22,14 +28,23 @@ def apply_trip_filters(query):
         date_to = '2019-01-01'
 
     if date_from:
-        query = query.filter(
-            Trip.tpep_pickup_datetime >= datetime.strptime(
-                date_from, '%Y-%m-%d')
-        )
+        try:
+            query = query.filter(
+                Trip.tpep_pickup_datetime >= datetime.strptime(
+                    date_from, '%Y-%m-%d')
+            )
+        except ValueError:
+            abort(400, description="Invalid date_from format. Expected YYYY-MM-DD")
     if date_to:
-        query = query.filter(
-            Trip.tpep_pickup_datetime <= datetime.strptime(date_to, '%Y-%m-%d')
-        )
+        try:
+            # Set to end of day to include all trips on date_to
+            date_to_dt = datetime.strptime(date_to, '%Y-%m-%d')
+            date_to_dt = date_to_dt.replace(hour=23, minute=59, second=59)
+            query = query.filter(
+                Trip.tpep_pickup_datetime <= date_to_dt
+            )
+        except ValueError:
+            abort(400, description="Invalid date_to format. Expected YYYY-MM-DD")
 
     min_pass = request.args.get('min_passengers', type=int)
     max_pass = request.args.get('max_passengers', type=int)
@@ -55,14 +70,14 @@ def apply_trip_filters(query):
     return query
 
 
-def apply_borough_filters(query, pickup_loc, dropoff_loc):
-    pickup_borough = request.args.get('pickup_borough')
-    if pickup_borough and pickup_borough != 'All':
-        query = query.filter(pickup_loc.Borough == pickup_borough)
+def apply_location_filters(query, pickup_loc, dropoff_loc):
+    pickup_zone = request.args.get('pickup_zone')
+    if pickup_zone and pickup_zone not in ('All', 'Any'):
+        query = query.filter(pickup_loc.Zone == pickup_zone)
 
-    dropoff_borough = request.args.get('dropoff_borough')
-    if dropoff_borough and dropoff_borough != 'All':
-        query = query.filter(dropoff_loc.Borough == dropoff_borough)
+    dropoff_zone = request.args.get('dropoff_zone')
+    if dropoff_zone and dropoff_zone not in ('All', 'Any'):
+        query = query.filter(dropoff_loc.Zone == dropoff_zone)
 
     return query
 
@@ -80,7 +95,7 @@ def get_trips_data():
         .join(dropoff_loc, Trip.DOLocationID == dropoff_loc.LocationID)
     )
     query = apply_trip_filters(query)
-    query = apply_borough_filters(query, pickup_loc, dropoff_loc)
+    query = apply_location_filters(query, pickup_loc, dropoff_loc)
 
     results = query.limit(15).offset((page - 1) * 15).all()
 
@@ -90,8 +105,8 @@ def get_trips_data():
             "no":           trip.trip_id,
             "pickup_time":  str(trip.tpep_pickup_datetime),
             "dropoff_time": str(trip.tpep_dropoff_datetime),
-            "pickup_borough":  pu_loc.Borough,
-            "dropoff_borough": do_loc.Borough,
+            "pickup_zone":  pu_loc.Zone,
+            "dropoff_zone": do_loc.Zone,
             "distance":     float(trip.trip_distance or 0),
             "passengers":   trip.passenger_count,
             "fare":         float(trip.fare_amount or 0),
@@ -107,29 +122,16 @@ def get_trips_data():
 
 @trips_bp.route('/stats', methods=['GET'])
 def get_trips_stats():
-    loc_map = {
-        l.LocationID: l.Borough
-        for l in db.session.query(Location.LocationID, Location.Borough).all()
-    }
+    pickup_loc = db.aliased(Location, name='pickup')
+    dropoff_loc = db.aliased(Location, name='dropoff')
 
-    query = db.session.query(Trip)
+    query = (
+        db.session.query(Trip)
+        .join(pickup_loc, Trip.PULocationID == pickup_loc.LocationID)
+        .join(dropoff_loc, Trip.DOLocationID == dropoff_loc.LocationID)
+    )
     query = apply_trip_filters(query)
-
-    pickup_borough = request.args.get('pickup_borough')
-    if pickup_borough and pickup_borough != 'Any':
-        ids = [lid for lid, b in loc_map.items() if b == pickup_borough]
-        if ids:
-            query = query.filter(Trip.PULocationID.in_(ids))
-        else:
-            query = query.filter(db.text("1=0"))
-
-    dropoff_borough = request.args.get('dropoff_borough')
-    if dropoff_borough and dropoff_borough != 'Any':
-        ids = [lid for lid, b in loc_map.items() if b == dropoff_borough]
-        if ids:
-            query = query.filter(Trip.DOLocationID.in_(ids))
-        else:
-            query = query.filter(db.text("1=0"))
+    query = apply_location_filters(query, pickup_loc, dropoff_loc)
 
     stats = query.with_entities(
         func.count(),
@@ -143,22 +145,18 @@ def get_trips_stats():
     avg_distance = round(float(stats[2] or 0), 1)
     avg_tip_pct = round(float(stats[3] or 0) * 100, 1)
 
-    best_borough = pickup_borough if (
-        pickup_borough and pickup_borough != 'Any') else None
+    pickup_zone = request.args.get('pickup_zone')
+    best_zone = pickup_zone if (
+        pickup_zone and pickup_zone not in ('Any', 'All')) else None
 
-    if not best_borough and total_trips > 0:
-        boro_counts_query = query.with_entities(
-            Trip.PULocationID, func.count()
-        ).group_by(Trip.PULocationID).all()
+    if not best_zone and total_trips > 0:
+        zone_counts_query = query.with_entities(
+            pickup_loc.Zone, func.count()
+        ).group_by(pickup_loc.Zone).order_by(func.count().desc()).first()
 
-        b_map = {}
-        for lid, cnt in boro_counts_query:
-            b = loc_map.get(lid, 'Unknown')
-            b_map[b] = b_map.get(b, 0) + cnt
-
-        best_borough = max(b_map, key=b_map.get) if b_map else "N/A"
-    elif not best_borough:
-        best_borough = "N/A"
+        best_zone = zone_counts_query[0] if zone_counts_query else "N/A"
+    elif not best_zone:
+        best_zone = "N/A"
 
     peak_hour = "N/A"
     if total_trips > 0:
@@ -179,7 +177,7 @@ def get_trips_stats():
         "avg_fare":     avg_fare,
         "avg_distance": avg_distance,
         "avg_tip_pct":  avg_tip_pct,
-        "best_borough": best_borough,
+        "best_zone":    best_zone,
         "peak_hour":    peak_hour,
     })
 

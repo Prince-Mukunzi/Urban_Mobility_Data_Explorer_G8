@@ -21,7 +21,9 @@ app.config["SQLALCHEMY_DATABASE_URI"] = (
 )
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-CORS(app)
+# Restrict CORS based on environment
+cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 
 db.init_app(app)
 
@@ -29,4 +31,5 @@ app.register_blueprint(auth_bp, url_prefix="/api")
 app.register_blueprint(trips_bp, url_prefix="/api")
 
 if __name__ == "__main__":
-    app.run(debug=True, port=3000)
+    debug_mode = os.getenv("FLASK_ENV") == "development"
+    app.run(debug=debug_mode, port=3000)

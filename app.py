@@ -1,14 +1,19 @@
 import mysql.connector
 import json
+import os
+from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template
+
+load_dotenv()
 
 app = Flask(__name__)
 
 db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': 'password',
-    'database': 'taxi_system',
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD', 'password'),
+    'database': os.getenv('DB_NAME', 'taxi_system'),
+    'port': int(os.getenv('DB_PORT', 3306)),
 }
 
 
@@ -55,4 +60,5 @@ def get_map_data():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    debug_mode = os.getenv('FLASK_ENV') == 'development'
+    app.run(debug=debug_mode, port=5000)

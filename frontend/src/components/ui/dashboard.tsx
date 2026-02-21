@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Calendar } from "./calendar";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "../../lib/utils";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "./command";
 import {
   Card,
   CardAction,
@@ -10,20 +20,11 @@ import {
   CardTitle,
 } from "./card";
 import { Field, FieldGroup, FieldLabel, FieldSet } from "./field";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./select";
 import { type DateRange } from "react-day-picker";
 import { Separator } from "./separator";
 import {
   Table,
   TableBody,
-  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
@@ -34,6 +35,7 @@ import { Button } from "./button";
 import { Input } from "./input";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { format } from "date-fns";
+import { toast } from "sonner";
 import { MapContainer, TileLayer, GeoJSON } from "react-leaflet";
 import type { Layer, PathOptions } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -42,8 +44,8 @@ interface Trip {
   no: string;
   pickup_time: string;
   dropoff_time: string;
-  pickup_borough: string;
-  dropoff_borough: string;
+  pickup_zone: string;
+  dropoff_zone: string;
   distance: number;
   passengers: number;
   fare: number;
@@ -56,20 +58,9 @@ interface Stats {
   avg_fare: number;
   avg_distance: number;
   avg_tip_pct: number;
-  best_borough: string;
+  best_zone: string;
   peak_hour: string;
 }
-
-const BOROUGHS = [
-  "Bronx",
-  "Brooklyn",
-  "EWR",
-  "Manhattan",
-  "N/A",
-  "Queens",
-  "Staten Island",
-  "Unknown",
-];
 
 const BOROUGH_COLORS: Record<string, string> = {
   Manhattan: "#f59e0b",
@@ -112,11 +103,90 @@ function onEachZone(feature: GeoJSON.Feature, layer: Layer) {
   });
 }
 
-const API = "http://127.0.0.1:3000/api";
+const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:3000/api";
+
+function SearchableSelect({
+  options,
+  value,
+  onChange,
+  placeholder,
+  searchPlaceholder,
+}: {
+  options: string[];
+  value: string;
+  onChange: (val: string) => void;
+  placeholder: string;
+  searchPlaceholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedLabel =
+    value === "Any"
+      ? placeholder
+      : options.find((o) => o === value) || placeholder;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span className="truncate">{selectedLabel}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[200px] md:w-[250px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="Any"
+                onSelect={() => {
+                  onChange("Any");
+                  setOpen(false);
+                }}
+              >
+                <Check
+                  className={cn(
+                    "mr-2 h-4 w-4",
+                    value === "Any" ? "opacity-100" : "opacity-0"
+                  )}
+                />
+                Any
+              </CommandItem>
+              {options.map((option) => (
+                <CommandItem
+                  key={option}
+                  value={option}
+                  onSelect={() => {
+                    onChange(value === option ? "Any" : option);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === option ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  {option}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function Dashboard() {
-  const [pub, setPub] = useState("Any");
-  const [dob, setDob] = useState("Any");
+  const [puz, setPuz] = useState("Any");
+  const [doz, setDoz] = useState("Any");
   const [date, setDate] = useState<DateRange | undefined>({
     from: new Date(2019, 0, 1),
     to: new Date(2019, 0, 1),
@@ -124,7 +194,10 @@ export function Dashboard() {
   const [passengerCount, setPassengerCount] = useState([1, 6]);
   const [tdistance, setTdistance] = useState([0, 50]);
   const [fare, setFare] = useState([0, 200]);
-  const [time, setTime] = useState("");
+  const [pickupTime, setPickupTime] = useState("");
+  const [dropoffTime, setDropoffTime] = useState("");
+  const [page, setPage] = useState(1);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(false);
@@ -133,14 +206,26 @@ export function Dashboard() {
     avg_fare: 0,
     avg_distance: 0,
     avg_tip_pct: 0,
-    best_borough: "N/A",
-    peak_hour: "N/A",
+    best_zone: "-",
+    peak_hour: "-",
   });
   const [statsLoading, setStatsLoading] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [geoData, setGeoData] = useState<any>(null);
   const geoJsonKey = useRef(0);
+
+  const { zoneOptions } = useMemo(() => {
+    if (!geoData) return { zoneOptions: [] };
+    const zSet = new Set<string>();
+    geoData.features.forEach((f: any) => {
+      const z = f.properties?.zone;
+      if (z && z !== "Unknown") zSet.add(z);
+    });
+    return {
+      zoneOptions: Array.from(zSet).sort(),
+    };
+  }, [geoData]);
 
   useEffect(() => {
     fetch(`${API}/zones`)
@@ -152,63 +237,115 @@ export function Dashboard() {
       .catch(console.error);
   }, []);
 
-  const buildParams = useCallback(() => {
-    const params = new URLSearchParams();
-    if (pub && pub !== "Any") params.append("pickup_borough", pub);
-    if (dob && dob !== "Any") params.append("dropoff_borough", dob);
-    if (date?.from) params.append("date_from", format(date.from, "yyyy-MM-dd"));
-    if (date?.to) params.append("date_to", format(date.to, "yyyy-MM-dd"));
-    params.append("min_passengers", passengerCount[0].toString());
-    params.append("max_passengers", passengerCount[1].toString());
-    params.append("min_distance", tdistance[0].toString());
-    params.append("max_distance", tdistance[1].toString());
-    params.append("min_fare", fare[0].toString());
-    params.append("max_fare", fare[1].toString());
-    if (time) {
-      const hour = parseInt(time.split(":")[0], 10);
-      if (!isNaN(hour)) params.append("pickup_hour", hour.toString());
-    }
-    return params.toString();
-  }, [pub, dob, date, passengerCount, tdistance, fare, time]);
+  const buildParams = useCallback(
+    (overridePage?: number) => {
+      const params = new URLSearchParams();
+      if (puz && puz !== "Any") params.append("pickup_zone", puz);
+      if (doz && doz !== "Any") params.append("dropoff_zone", doz);
+      if (date?.from)
+        params.append("date_from", format(date.from, "yyyy-MM-dd"));
+      if (date?.to) params.append("date_to", format(date.to, "yyyy-MM-dd"));
+      params.append("min_passengers", passengerCount[0].toString());
+      params.append("max_passengers", passengerCount[1].toString());
+      params.append("min_distance", tdistance[0].toString());
+      params.append("max_distance", tdistance[1].toString());
+      params.append("min_fare", fare[0].toString());
+      params.append("max_fare", fare[1].toString());
+      if (pickupTime) {
+        const hour = parseInt(pickupTime.split(":")[0], 10);
+        if (!isNaN(hour)) params.append("pickup_hour", hour.toString());
+      }
+      if (dropoffTime) {
+        const hour = parseInt(dropoffTime.split(":")[0], 10);
+        if (!isNaN(hour)) params.append("dropoff_hour", hour.toString());
+      }
+      params.append("page", (overridePage ?? page).toString());
+      return params.toString();
+    },
+    [
+      puz,
+      doz,
+      date,
+      passengerCount,
+      tdistance,
+      fare,
+      pickupTime,
+      dropoffTime,
+      page,
+    ]
+  );
 
   const fetchData = useCallback(
     async (qs?: string) => {
       const query = qs ?? buildParams();
 
-      setLoading(true);
-      fetch(`${API}/trips?${query}`)
-        .then((res) => res.json())
-        .then((data) => setTrips(data.trips))
-        .catch(console.error)
-        .finally(() => setLoading(false));
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
+      setLoading(true);
       setStatsLoading(true);
-      fetch(`${API}/stats?${query}`)
-        .then((res) => res.json())
-        .then((data) => setStats(data))
-        .catch(console.error)
-        .finally(() => setStatsLoading(false));
+
+      const toastId = toast.loading("Fetching data...");
+
+      Promise.all([
+        fetch(`${API}/trips?${query}`, { signal: controller.signal }).then(
+          async (res) => {
+            if (!res.ok) throw new Error("Failed to fetch trips");
+            return res.json();
+          }
+        ),
+        fetch(`${API}/stats?${query}`, { signal: controller.signal }).then(
+          async (res) => {
+            if (!res.ok) throw new Error("Failed to fetch stats");
+            return res.json();
+          }
+        ),
+      ])
+        .then(([tripsData, statsData]) => {
+          setTrips(tripsData.trips);
+          setStats(statsData);
+          toast.success("Dashboard updated successfully", { id: toastId });
+        })
+        .catch((err) => {
+          if (err.name !== "AbortError") {
+            console.error(err);
+            toast.error(err.message || "Failed to fetch data", { id: toastId });
+          } else {
+            toast.dismiss(toastId);
+          }
+        })
+        .finally(() => {
+          setLoading(false);
+          setStatsLoading(false);
+        });
     },
     [buildParams]
   );
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleApplyFilters = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchData();
+    setPage(1);
+    fetchData(buildParams(1));
   };
 
   const handleReset = () => {
-    setPub("Any");
-    setDob("Any");
+    setPuz("Any");
+    setDoz("Any");
     setDate({ from: new Date(2019, 0, 1), to: new Date(2019, 0, 1) });
     setPassengerCount([1, 6]);
     setTdistance([0, 50]);
     setFare([0, 200]);
-    setTime("");
+    setPage(1);
+    setPickupTime("");
+    setDropoffTime("");
 
     const defaults = new URLSearchParams({
       date_from: "2019-01-01",
@@ -219,6 +356,7 @@ export function Dashboard() {
       max_distance: "50",
       min_fare: "0",
       max_fare: "200",
+      page: "1",
     });
     fetchData(defaults.toString());
   };
@@ -231,10 +369,10 @@ export function Dashboard() {
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <div className="flex flex-col space-y-1">
           <h1 className="text-2xl md:text-3xl font-medium">
-            Urban Mobility Data Explorer
+            NYC TLC • 2008 – 2019
           </h1>
           <p className="text-black/50 text-sm md:text-base">
-            NYC TLC • Jan 2019
+            Urban Mobility Data Explorer
           </p>
         </div>
         <div className="flex flex-col space-y-1 sm:text-right">
@@ -278,10 +416,13 @@ export function Dashboard() {
         <Card className="flex flex-row justify-between w-full h-full">
           <CardHeader className="p-4">
             <CardTitle className="text-xs md:text-sm font-normal text-black/50 whitespace-nowrap">
-              Best Pickup Borough
+              Best Pickup Zone
             </CardTitle>
-            <CardDescription className="text-black text-xl md:text-2xl lg:text-3xl font-semibold">
-              {statsLoading ? "..." : stats.best_borough}
+            <CardDescription
+              className="text-black text-xl md:text-2xl lg:text-3xl font-semibold text-nowrap"
+              title={stats.best_zone}
+            >
+              {statsLoading ? "..." : stats.best_zone}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex items-center p-4">
@@ -293,7 +434,7 @@ export function Dashboard() {
             <CardTitle className="text-xs md:text-sm font-normal text-black/50 whitespace-nowrap">
               Peak Hour
             </CardTitle>
-            <CardDescription className="text-black text-xl md:text-2xl lg:text-3xl font-semibold">
+            <CardDescription className="text-black text-xl md:text-2xl lg:text-3xl font-semibold text-nowrap">
               {statsLoading ? "..." : stats.peak_hour}
             </CardDescription>
           </CardHeader>
@@ -319,57 +460,44 @@ export function Dashboard() {
                 <FieldSet>
                   <FieldGroup className="space-y-4">
                     <Field>
-                      <FieldLabel htmlFor="pub">Pickup Borough</FieldLabel>
-                      <Select
-                        defaultValue={pub}
-                        onValueChange={setPub}
-                        value={pub}
-                      >
-                        <SelectTrigger id="pub">
-                          <SelectValue placeholder="Any" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectItem value="Any">Any</SelectItem>
-                            {BOROUGHS.map((b) => (
-                              <SelectItem key={b} value={b}>
-                                {b}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
+                      <FieldLabel htmlFor="puz">Pickup Zone</FieldLabel>
+                      <SearchableSelect
+                        options={zoneOptions}
+                        value={puz}
+                        onChange={setPuz}
+                        placeholder="Any"
+                        searchPlaceholder="Search zone..."
+                      />
                     </Field>
                     <Field>
-                      <FieldLabel htmlFor="dob">Dropoff Borough</FieldLabel>
-                      <Select
-                        defaultValue={dob}
-                        onValueChange={setDob}
-                        value={dob}
-                      >
-                        <SelectTrigger id="dob">
-                          <SelectValue placeholder="Any" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectItem value="Any">Any</SelectItem>
-                            {BOROUGHS.map((b) => (
-                              <SelectItem key={b} value={b}>
-                                {b}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
+                      <FieldLabel htmlFor="doz">Dropoff Zone</FieldLabel>
+                      <SearchableSelect
+                        options={zoneOptions}
+                        value={doz}
+                        onChange={setDoz}
+                        placeholder="Any"
+                        searchPlaceholder="Search zone..."
+                      />
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="put">Pickup Time</FieldLabel>
                       <Input
                         type="time"
-                        id="time-picker-optional"
+                        id="put"
                         step="1"
-                        defaultValue={time}
-                        onChange={(e) => setTime(e.target.value)}
+                        defaultValue={pickupTime}
+                        onChange={(e) => setPickupTime(e.target.value)}
+                        className="bg-background appearance-none"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="dot">Dropoff Time</FieldLabel>
+                      <Input
+                        type="time"
+                        id="dot"
+                        step="1"
+                        defaultValue={dropoffTime}
+                        onChange={(e) => setDropoffTime(e.target.value)}
                         className="bg-background appearance-none"
                       />
                     </Field>
@@ -495,7 +623,7 @@ export function Dashboard() {
         {/* Right column / Map & Table */}
         <div className="flex-1 flex flex-col space-y-4 min-w-0">
           <Card className="w-full overflow-hidden">
-            <CardHeader className="p-4 md:p-6">
+            <CardHeader>
               <CardTitle className="text-lg md:text-xl font-medium">
                 NYC Taxi Zones
               </CardTitle>
@@ -528,41 +656,15 @@ export function Dashboard() {
           <Card className="w-full overflow-hidden">
             <div className="overflow-x-auto">
               <Table>
-                <TableCaption className="p-2 text-xs md:text-sm">
-                  Showing {trips.length} records
-                </TableCaption>
-                <TableHeader className="bg-gray-50">
-                  <TableRow>
-                    <TableHead className="whitespace-nowrap px-4 py-3">
-                      No
-                    </TableHead>
-                    <TableHead className="whitespace-nowrap px-4 py-3">
-                      Pickup Time
-                    </TableHead>
-                    <TableHead className="whitespace-nowrap px-4 py-3">
-                      Dropoff Time
-                    </TableHead>
-                    <TableHead className="whitespace-nowrap px-4 py-3">
-                      Pickup Borough
-                    </TableHead>
-                    <TableHead className="whitespace-nowrap px-4 py-3">
-                      Dropoff Borough
-                    </TableHead>
-                    <TableHead className="text-center whitespace-nowrap px-4 py-3">
-                      Distance(km)
-                    </TableHead>
-                    <TableHead className="text-center whitespace-nowrap px-4 py-3">
-                      Passengers
-                    </TableHead>
-                    <TableHead className="text-center whitespace-nowrap px-4 py-3">
-                      Fare($)
-                    </TableHead>
-                    <TableHead className="text-center whitespace-nowrap px-4 py-3">
-                      Tip($)
-                    </TableHead>
-                    <TableHead className="text-center whitespace-nowrap px-4 py-3">
-                      Total($)
-                    </TableHead>
+                <TableHeader>
+                  <TableRow className="text-center">
+                    <TableHead>Pickup Time</TableHead>
+                    <TableHead>Dropoff Time</TableHead>
+                    <TableHead>Pickup Zone</TableHead>
+                    <TableHead>Dropoff Zone</TableHead>
+                    <TableHead>Distance</TableHead>
+                    <TableHead>Fare</TableHead>
+                    <TableHead>Passengers</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -579,28 +681,22 @@ export function Dashboard() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    trips.map((trip) => (
-                      <TableRow key={trip.no} className="hover:bg-gray-50/50">
-                        <TableCell className="px-4 py-3 font-medium">
-                          {trip.no}
+                    trips.map((trip, idx) => (
+                      <TableRow key={`${trip.no}-${idx}`}>
+                        <TableCell className="whitespace-nowrap">
+                          {format(new Date(trip.pickup_time), "MMM d, HH:mm")}
                         </TableCell>
-                        <TableCell className="px-4 py-3 whitespace-nowrap">
-                          {format(new Date(trip.pickup_time), "p")}
+                        <TableCell className="whitespace-nowrap">
+                          {format(new Date(trip.dropoff_time), "MMM d, HH:mm")}
                         </TableCell>
-                        <TableCell className="px-4 py-3 whitespace-nowrap">
-                          {format(new Date(trip.dropoff_time), "p")}
+                        <TableCell title={trip.pickup_zone}>
+                          {trip.pickup_zone}
                         </TableCell>
-                        <TableCell className="px-4 py-3">
-                          {trip.pickup_borough}
+                        <TableCell title={trip.dropoff_zone}>
+                          {trip.dropoff_zone}
                         </TableCell>
-                        <TableCell className="px-4 py-3">
-                          {trip.dropoff_borough}
-                        </TableCell>
-                        <TableCell className="text-center px-4 py-3">
+                        <TableCell className="text-right">
                           {trip.distance.toFixed(1)}
-                        </TableCell>
-                        <TableCell className="text-center px-4 py-3">
-                          {trip.passengers}
                         </TableCell>
                         <TableCell className="text-center px-4 py-3">
                           {trip.fare.toFixed(2)}
@@ -616,6 +712,34 @@ export function Dashboard() {
                   )}
                 </TableBody>
               </Table>
+            </div>
+
+            <div className="flex items-center justify-between p-4 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const newPage = Math.max(1, page - 1);
+                  setPage(newPage);
+                  fetchData(buildParams(newPage));
+                }}
+                disabled={page <= 1}
+              >
+                Previous
+              </Button>
+              <div className="text-sm font-medium">Page {page}</div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const newPage = page + 1;
+                  setPage(newPage);
+                  fetchData(buildParams(newPage));
+                }}
+                disabled={trips.length < 15}
+              >
+                Next
+              </Button>
             </div>
           </Card>
         </div>
