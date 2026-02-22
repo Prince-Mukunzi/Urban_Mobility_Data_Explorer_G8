@@ -2,14 +2,17 @@ import json
 import geopandas as gpd
 import mysql.connector
 from shapely.geometry import mapping
+import os
+from dotenv import load_dotenv
 
 print("Connecting to database...")
-conn = mysql.connector.connect(
-    host="",
-    user="",
-    password="",
-    database="",
-    port=""
+
+con = mysql.connector.connect(
+    host=os.getenv("dB_HOST"),
+    port=int(os.getenv("dB_PORT")),
+    user=os.getenv("dB_USER"),
+    password=os.getenv("dB_PASS"),
+    database=os.getenv("dB_NAME")
 )
 cursor = conn.cursor()
 print("Connected to db successfully!")
