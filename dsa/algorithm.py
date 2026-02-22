@@ -1,69 +1,62 @@
-import json
 import mysql.connector
 import time
+import os
+from dotenv import load_dotenv
 
-# DB connection
+# DB connection 
 con = mysql.connector.connect(
-    host="",
-    port=,
-    user="",
-    password="",
-    database=""
+    host=os.getenv("DB_HOST"),
+    port=int(os.getenv("DB_PORT")), 
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASS"),
+    database=os.getenv("DB_NAME")
 )
-cursor = con.cursor()
-
-print("Connected to database!")
-
-start = time.perf_counter()
-cursor.execute("SELECT LocationID, Borough FROM locations")
-location_map = {row[0]: row[1] for row in cursor.fetchall()}
-end = time.perf_counter()    
-
-print(f"Loaded {len(location_map)} locations into hash map in: {end - start:.2f} seconds")
+cursor = con.cursor(buffered=False) 
 
 
-print("\nBusiest Borough...")
-start = time.perf_counter()
-cursor.execute("""
-    SELECT PULocationID, COUNT(*) as trip_count
-    FROM trips
-    GROUP BY PULocationID
-    ORDER BY trip_count DESC
-""")
+target_zone = 81 
 
-borough_counts = {}
-for row in cursor.fetchall():
-    loc_id = row[0]
-    count = row[1]
-    borough_name = location_map.get(loc_id, "Unknown")
-    borough_counts[borough_name] = borough_counts.get(borough_name, 0) + count
+query = "SELECT fare_amount, tpep_pickup_datetime FROM trips WHERE PULocationID = %s"
+cursor.execute(query, (target_zone,))
+data_subset = cursor.fetchall() 
 
-top_borough = max(borough_counts, key=borough_counts.get)
-problem_1 = {
-    "borough": top_borough,
-    "trip_count": borough_counts[top_borough]
-}
-end = time.perf_counter()
 
-print(json.dumps({"busiest_borough": problem_1,"execution_time": round(end - start, 2)}, indent=2))
 
-print("\nFinding Peak Hour...")
-start = time.perf_counter()
-cursor.execute("""
-    SELECT HOUR(tpep_pickup_datetime) as trip_hour, COUNT(*) as trip_count
-    FROM trips
-    GROUP BY trip_hour
-    ORDER BY trip_count DESC
-    LIMIT 1
-""")
+start_time = time.perf_counter()
 
-row = cursor.fetchone()
-peak_hour_data = {
-    "peak_hour": f"{row[0]}:00",
-    "trip_count": row[1]
-}
-end = time.perf_counter()
+hour_map = {}
+total_fare_sum = 0.0
+trip_count = 0
 
-print(json.dumps({"peak_hour": peak_hour_data,"execution_time": round(end - start, 2)}, indent=2))
+for fare, dt in data_subset:
+    trip_count += 1
+    
+    total_fare_sum += float(fare)
+    
+    hour = dt.hour
+    if hour in hour_map:
+        hour_map[hour] += 1
+    else:
+        hour_map[hour] = 1
+
+average_fare = total_fare_sum / trip_count if trip_count > 0 else 0
+
+peak_hour = None
+max_val = -1
+for hour, count in hour_map.items():
+    if count > max_val:
+        max_val = count
+        peak_hour = hour
+
+end_time = time.perf_counter()
+print("")
+print("==============================")
+print(f"Zone id: {target_zone}")
+print(f"Total trips: {trip_count}")
+print(f"average fare: ${average_fare:.2f}")
+print(f"peak Hour: {peak_hour}:00")
+print(f"total time: {end_time - start_time:.6f} seconds")
+print("==============================")
+
 cursor.close()
 con.close()
