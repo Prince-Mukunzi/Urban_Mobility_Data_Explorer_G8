@@ -653,10 +653,10 @@ export function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="w-full overflow-hidden">
+          <Card className="w-full overflow-hidden py-0">
             <div className="overflow-x-auto">
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-secondary">
                   <TableRow className="text-center">
                     <TableHead>Pickup Time</TableHead>
                     <TableHead>Dropoff Time</TableHead>
@@ -664,7 +664,8 @@ export function Dashboard() {
                     <TableHead>Dropoff Zone</TableHead>
                     <TableHead>Distance</TableHead>
                     <TableHead>Fare</TableHead>
-                    <TableHead>Passengers</TableHead>
+                    <TableHead>Tip</TableHead>
+                    <TableHead>Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -695,16 +696,10 @@ export function Dashboard() {
                         <TableCell title={trip.dropoff_zone}>
                           {trip.dropoff_zone}
                         </TableCell>
-                        <TableCell className="text-right">
-                          {trip.distance.toFixed(1)}
-                        </TableCell>
-                        <TableCell className="text-center px-4 py-3">
-                          {trip.fare.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-center px-4 py-3">
-                          {trip.tip.toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-center px-4 py-3 font-medium">
+                        <TableCell>{trip.distance.toFixed(1)}</TableCell>
+                        <TableCell>{trip.fare.toFixed(2)}</TableCell>
+                        <TableCell>{trip.tip.toFixed(2)}</TableCell>
+                        <TableCell className="font-medium">
                           {trip.total.toFixed(2)}
                         </TableCell>
                       </TableRow>
