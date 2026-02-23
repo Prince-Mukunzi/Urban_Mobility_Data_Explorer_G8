@@ -2,8 +2,10 @@
 
 An interactive, full-stack web application designed to explore, analyze, and visualize NYC taxi trip data. This dashboard allows users to filter trips by various parameters (date, time, passengers, distance, fare, and borough), view aggregated statistics, and interact with a GeoJSON-based map of taxi zones.
 
-[Demo Video](https://www.loom.com/share/f3cc6c7b99ad4c67a480b0de44d1e171)
-[Team Task Sheet](https://docs.google.com/spreadsheets/d/1ORAIB03Wm-LioCZxz_5XgWB3j13AIiS9YiNJSEdSuAc/edit?usp=sharing)
+### Links
+[Demo Video](https://www.loom.com/share/f3cc6c7b99ad4c67a480b0de44d1e171) – 
+[Team Task Sheet](https://docs.google.com/spreadsheets/d/1ORAIB03Wm-LioCZxz_5XgWB3j13AIiS9YiNJSEdSuAc/edit?usp=sharing) – 
+[Documentation Report](https://docs.google.com/document/d/19I2TEXQkXvvKtIASzrH1qfpJaE-9f6goRsFaQAQvbmY/edit?tab=t.0)
 
 ## Features
 
