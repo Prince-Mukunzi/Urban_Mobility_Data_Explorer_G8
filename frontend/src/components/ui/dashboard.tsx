@@ -62,6 +62,7 @@ interface Stats {
   peak_hour: string;
 }
 
+// Colors used to visually distinguish different boroughs on our interactive map
 const BOROUGH_COLORS: Record<string, string> = {
   Manhattan: "#f59e0b",
   Brooklyn: "#3b82f6",
@@ -73,6 +74,7 @@ const BOROUGH_COLORS: Record<string, string> = {
   Unknown: "#9ca3af",
 };
 
+// Assign our custom colors and map styles to each neighborhood depending on which borough it belongs to
 function boroughStyle(feature?: GeoJSON.Feature): PathOptions {
   const borough = feature?.properties?.borough || "Unknown";
   return {
@@ -84,6 +86,7 @@ function boroughStyle(feature?: GeoJSON.Feature): PathOptions {
   };
 }
 
+// Show a tooltip with the neighborhood name and bold the boundaries when the user's mouse hovers over it
 function onEachZone(feature: GeoJSON.Feature, layer: Layer) {
   const props = feature.properties;
   if (!props) return;
@@ -185,6 +188,7 @@ function SearchableSelect({
 }
 
 export function Dashboard() {
+  // Keep track of all our filter settings in state
   const [puz, setPuz] = useState("Any");
   const [doz, setDoz] = useState("Any");
   const [date, setDate] = useState<DateRange | undefined>({
@@ -211,10 +215,12 @@ export function Dashboard() {
   });
   const [statsLoading, setStatsLoading] = useState(false);
 
+  // Hold onto the map neighborhood data we get from the backend
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [geoData, setGeoData] = useState<any>(null);
   const geoJsonKey = useRef(0);
 
+  // Extract all unique zones from the map data so we can list them in our dropdowns
   const { zoneOptions } = useMemo(() => {
     if (!geoData) return { zoneOptions: [] };
     const zSet = new Set<string>();
@@ -227,6 +233,7 @@ export function Dashboard() {
     };
   }, [geoData]);
 
+  // Fetch the map boundaries once when the dashboard first loads
   useEffect(() => {
     fetch(`${API}/zones`)
       .then((r) => r.json())
@@ -237,6 +244,7 @@ export function Dashboard() {
       .catch(console.error);
   }, []);
 
+  // Turn all our filter variables into a proper URL query string that the backend understands
   const buildParams = useCallback(
     (overridePage?: number) => {
       const params = new URLSearchParams();
@@ -275,10 +283,12 @@ export function Dashboard() {
     ]
   );
 
+  // Talk to the backend to get the latest trips and stats based on what filters are active
   const fetchData = useCallback(
     async (qs?: string) => {
       const query = qs ?? buildParams();
 
+      // Cancel any ongoing requests before starting a new one so we don't get mixed up data
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -336,6 +346,7 @@ export function Dashboard() {
     fetchData(buildParams(1));
   };
 
+  // Put all filters back to their default starting values
   const handleReset = () => {
     setPuz("Any");
     setDoz("Any");
@@ -365,7 +376,7 @@ export function Dashboard() {
 
   return (
     <div className="w-full p-4 md:p-6 flex flex-col space-y-4 bg-gray-50">
-      {/* Header - Stack on very small screens, row on sm up */}
+      {/* The header section that stacks vertically on phones, but sits side-by-side on larger screens */}
       <div className="flex flex-col sm:flex-row justify-between gap-4">
         <div className="flex flex-col space-y-1">
           <h1 className="text-2xl md:text-3xl font-medium">
@@ -385,7 +396,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Cards - Responsive Grid */}
+      {/* Top statistics cards showing our main metrics. They adjust from 1 to 4 columns depending on screen size */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="flex flex-row justify-between w-full h-full">
           <CardHeader className="p-4">
@@ -444,9 +455,9 @@ export function Dashboard() {
         </Card>
       </div>
 
-      {/* Main content - Flex column on mobile, row on large screens */}
+      {/* This contains the filters and the map/table area. They sit side-by-side on desktop but stack on mobile */}
       <div className="flex flex-col lg:flex-row gap-2">
-        {/* Left column / Filters */}
+        {/* The filter sidebar where users can narrow down trips by time, location, passengers, and cost */}
         <Card className="w-full lg:max-w-xs xl:max-w-sm h-fit">
           <CardHeader>
             <CardTitle className="text-xl md:text-2xl font-medium">
@@ -620,7 +631,7 @@ export function Dashboard() {
           </CardFooter>
         </Card>
 
-        {/* Right column / Map & Table */}
+        {/* The main data visualization area showing the interactive map on top and the data table below */}
         <div className="flex-1 flex flex-col space-y-4 min-w-0">
           <Card className="w-full overflow-hidden">
             <CardHeader>
